@@ -1,0 +1,11 @@
+*.pyc
+*.swp
+*.copy
+*.swn
+*.swo
+*.txt
+.*   
+pdf.*
+shclearing/settings.py
+shclearing/pipelines.py
+nohup.out
