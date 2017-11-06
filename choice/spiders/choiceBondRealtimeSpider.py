@@ -53,6 +53,7 @@ class ChoiceBondRealtimeSpider(scrapy.Spider):
                         item['typeName'] = typeName
                         item['secuList'] = data['secuList']
                         item['url'] = attach['url']
+                        item['filepath'] = self.download_files(item['url'])
                         item['filetype'] = attach['filetype']
                         item['pagenum'] = attach['pagenum']
                         item['filename'] = attach['name']
@@ -71,6 +72,9 @@ class ChoiceBondRealtimeSpider(scrapy.Spider):
         for key in params:
             tmp.append(str(key)+'='+str(params[key]))
         return base_url+"?"+"&".join(tmp)
+
+    def download_files(self,url):
+        return relative_path
 
     def send_mail(self,subject,content):
         mailer = MailSender()

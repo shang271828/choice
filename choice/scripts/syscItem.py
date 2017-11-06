@@ -12,30 +12,43 @@ import logging
 from retry import retry
 from pymongo import MongoClient
 import scrapy
+from collections import Iterable
 from scrapy.conf import settings
 reload(sys)
+sys.setdefaultencoding('utf8')
+
 '''
-# 获取pdf下载链接，下载并保存到本地
-1.从mongo中获取待下载的数据数量信息，根据日期分配进程
-2.每个子进程从mongo中获取未下载成功的pdf链接
-3.下载pdf
-4.将pdf路径和是否下载成功的信息同时同步到mongo和MySQL
+同步数据
+从mysql中获取所有secuList不完整的资讯id
+从mongo中获取这些id对应的完整seculist
+更新mysql
 '''
-class downloadFiles():
-    rootDir = '/data/nfs/'
-    preDir = 'bond/choice/'
-    PROCESS_NUMBER = 12
-    baseDate = '2012-01-01'
-    #间隔，以月为单位
-    size = 1 
+class syscItem():
 
     def __init__(self):
-        jobs = []
-        for i in range(self.PROCESS_NUMBER):
-            p = multiprocessing.Process(target=self.worker, args=(i,)) 
-            jobs.append(p)
-            p.start()
+        self.run()
 
+    def run(self):
+        choiceIdList = self.get_choice_list()
+        try:
+            count = len(choiceIdList)
+            limit = 1000
+            times = count//limit+1
+            for i in range(times):
+                where = {'choiceId':{'$in':choiceIdList}}
+                result = self.getMongoItemsCommon(where,limit,i*limit)
+                assert(isinstance(result,Iterable)==True)
+                try:
+                    for item in result:
+                        secuList = json.dumps(item['secuList'])
+                        updateItem = {'choiceId':item['choiceId']}
+                        updateItem['secuList'] = secuList
+                        updateItem['update_time'] = datetime.datetime.now()
+                        self.updateMysql(updateItem)
+                except:
+                    print(sys.exc_info())
+        except:
+            print(sys.exc_info())
     #获取待下载的pdf数据
     def worker(self,num):
         #设置待下载的时间区间
@@ -66,32 +79,16 @@ class downloadFiles():
                 self.updateMongo(updateItem)
                 self.updateMysql(updateItem)
 
-    def setDateRegion(self,num):
-        baseDateInfo = self.baseDate.split('-')
-        leftMonth = int(baseDateInfo[1]) + num
-        leftYear = int(baseDateInfo[0])
-        if leftMonth>12:
-            leftYear = leftYear + leftMonth//12
-            leftMonth = leftMonth-12*(leftMonth//12)
-        rightMonth = leftMonth + self.size
-        rightYear = leftYear
-        if rightMonth>12:
-            rightYear = rightYear + rightMonth//12
-            rightMonth = rightMonth - 12*(rightMonth//12)
-        if leftMonth<10:
-            leftMonth = '0'+str(leftMonth) 
-        if rightMonth<10:
-            rightMonth = '0'+str(rightMonth)
-        leftDate = str(leftYear)+'-'+str(leftMonth)+'-'+baseDateInfo[2]
-        rightDate = str(rightYear)+'-'+str(rightMonth)+'-'+baseDateInfo[2] 
-        return (leftDate,rightDate)
-
     def getCount(self,leftDate,rightDate):
         collection = self.getMongoConn()
         return collection.find({"date" : { "$gte":leftDate, "$lt":rightDate},'is_download':{"$exists":False}}).count()          
     
     def getMongoItems(self,leftDate,rightDate,limit,skip):
         where = {"date" : { "$gte":leftDate, "$lt":rightDate},'is_download':{"$exists":False}}
+        collection = self.getMongoConn()
+        return collection.find(where).sort("date").limit(limit).skip(skip)
+
+    def getMongoItemsCommon(self,where,limit,skip):
         collection = self.getMongoConn()
         return collection.find(where).sort("date").limit(limit).skip(skip)
 
@@ -123,32 +120,24 @@ class downloadFiles():
         except :
             logging.error("Database connect error:", sys.exc_info()[0])
             raise
-        #设置文件保存的相对路径
-    def set_path(self,url,date,pre=''):
-        tail = 'default'
-        dateArr = date.split('-')
-        if dateArr:
-            tail = '/'.join(dateArr)+'/'                 
-        filename = url.split('/')[-1] 
-        filetype = filename.split('.')[1] 
-        relative_path = pre+tail+filename
-        if not os.path.exists(self.rootDir+pre+tail):
-            os.makedirs(self.rootDir+pre+tail)
-        return (relative_path,filename,filetype)
 
-    # 下载文件
-    @retry(tries=5, delay=2)
-    def save_file(self,url,path):
-        #文件是否存在
-        is_exist = os.path.exists(path) 
-        if not is_exist:
-            #若不存在，调用接口下载文件
-            pdfResponse = requests.get(url, stream=True)
-            if pdfResponse.status_code == 200:
-                with open(path, "wb") as f:
-                    for chunk in pdfResponse.iter_content(chunk_size=1024):
-                        f.write(chunk)
-
+    def get_choice_list(self):
+        conn = self.get_conn()
+        cursor = conn.cursor()
+        sql = "SELECT choiceId from choice_news where secuList not like '%]'"
+        try:
+            cursor.execute(sql)
+            result = cursor.fetchall()
+            choiceIdList = []
+            for item in result:
+                choiceIdList.append(item[0])
+            return choiceIdList
+        except:
+            print(sys.exc_info())
+           # logging.error("Database connect error:", sys.exc_info()[0])
+        conn.close()
+        cursor.close()
+           
     # 文件下载成功后，更新数据库状态
     def updateMysql(self,updateItem):
         conn = self.get_conn() 
@@ -175,4 +164,4 @@ class downloadFiles():
         cursor.close()
         conn.close() 
 
-aa = downloadFiles()
+aa = syscItem()
